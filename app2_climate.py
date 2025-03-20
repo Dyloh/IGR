@@ -26,18 +26,16 @@ from component_analysis import pca_components_gf, orthomax
 from statsmodels.tsa.stattools import grangercausalitytests
 from sklearn.metrics import r2_score
 
-def standard(traindata):
-     mean=np.mean(traindata,axis=0)
-     std=np.std(traindata,axis=0)
-     print(mean.shape,std.shape)
-     norm_data=(traindata-mean)/std
-     return norm_data
-def err(x,y,weight):
-    e=0
-    for i in range(x.shape[0]):
-         # print(x[i,:].dot(weight),y[i])
-          e=e+(x[i,:].dot(weight)-y[i])**2
-    return e/x.shape[0]
+tau_max=7
+tau_min=1
+dataset = nc.Dataset('data/air.1950.nc')
+temp_data = dataset.variables['air'][:,8]
+dataset1 = nc.Dataset('data/air.2000.nc') 
+temp_data1 = dataset1.variables['air'][:,8]
+dataset2 = nc.Dataset('data/air.2010.nc')
+temp_data2 = dataset2.variables['air'][:,8]
+dataset3 = nc.Dataset('data/air.2020.nc')
+temp_data3 = dataset3.variables['air'][:,8]
 
 def subsets(nums,l,i):
     result = [[i]]
@@ -104,6 +102,13 @@ def compute_igr(features, responses, x_val,y_val,x_test,y_test,hyper_gamma=100,s
                          min_ind=np.where(weight>1e-4)[0]
         print(x_test.shape,y_test.shape,min_ind)
         return min_weight,loss_test
+def err(x,y,weight):
+    e=0
+    for i in range(x.shape[0]):
+         # print(x[i,:].dot(weight),y[i])
+          e=e+(x[i,:].dot(weight)-y[i])**2
+    return e/x.shape[0]
+
 def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resume=False):
     loss0_list=[]
     loss_list=[]
@@ -256,20 +261,8 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
     print(np.mean(drig_list),np.mean(an_list),np.mean(loss0_list),np.mean(cd_list))
     return loss_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list,loss0_list
 
-def tofield(d, lats, lons):
-    return d.reshape([len(lats), len(lons)])
     
-tau_max=1
-tau_min=1
-resume=False
-dataset = nc.Dataset('data/air.1950.nc')
-temp_data = dataset.variables['air'][:,8]
-dataset1 = nc.Dataset('data/air.2000.nc') 
-temp_data1 = dataset1.variables['air'][:,8]
-dataset2 = nc.Dataset('data/air.2010.nc')
-temp_data2 = dataset2.variables['air'][:,8]
-dataset3 = nc.Dataset('data/air.2020.nc')
-temp_data3 = dataset3.variables['air'][:,8]
+
 
 temp_mean=np.mean(temp_data,axis=0)
 print(temp_data.shape,temp_mean.shape)
@@ -330,10 +323,10 @@ for i in range(1):
      tau_max=i+3
      tau_min=1
      t.append(tau_max)
-     with open('air.csv','a',encoding='utf-8',newline="" ) as f:
+     with open('out/out.csv','a',encoding='utf-8',newline="" ) as f:
              csv_w=csv.writer(f)
              for j in range(10):
-                loss_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list,loss0_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,'granger')
+                loss_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list,loss0_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,'IGR')
                 print(np.mean(loss_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list),np.mean(loss0_list))
                 csv_w.writerow([np.mean(loss_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list),np.mean(loss0_list)])
              f.close()
