@@ -25,6 +25,13 @@ The results can be reported ussing ``report_app1.ipynb``.
 #### Source of the data
 The data can be collected through the [MCD](https://github.com/Rose-STL-Lab/MCD) repository by running ``src/utils/data_gen/generate_stock.py`` and terminate before the data is chunked.
 
+### Real data application II: Climate Dynamic Prediction
+#### Reproduction
+Download NECP reanalysis data through [MCD](https://psl.noaa.gov/thredds/catalog/Datasets/ncep.reanalysis/Dailies/pressure/catalog.html). It is needed to change the directories of data in app2_climate.py. We then run the following script to provide the results of our method and competing methods with 100 replicates.
+```bash
+python app2_climate.py
+```
+
 ## Direct usage of the IGR estimator
 The IGR estimator can be directly used through calling the ``IGR`` function in ``methods.py``. The signature of the function is as follows
 ```python
