@@ -27,7 +27,7 @@ The data can be collected through the [MCD](https://github.com/Rose-STL-Lab/MCD)
 
 ### Real data application II: Climate Dynamic Prediction
 #### Reproduction
-Download NECP reanalysis data through [NECP](https://psl.noaa.gov/thredds/catalog/Datasets/ncep.reanalysis/Dailies/pressure/catalog.html). It is needed to change the directories of data in ``app2_climate.py``. We then run the following script to provide the results of our method and competing methods with 100 replicates.
+Download NECP reanalysis data through [NECP](https://psl.noaa.gov/thredds/catalog/Datasets/ncep.reanalysis/Dailies/pressure/catalog.html). It is needed to change the directories of data in ``app2_climate.py``. We then run the following script to provide the results of our method and competing methods with 100 replicates. The results will be saved in ``saved_result/out.csv``
 ```bash
 python app2_climate.py
 ```
