@@ -323,7 +323,7 @@ for i in range(1):
      tau_max=i+3
      tau_min=1
      t.append(tau_max)
-     with open('out/out.csv','a',encoding='utf-8',newline="" ) as f:
+     with open('saved_results/out.csv','a',encoding='utf-8',newline="" ) as f:
              csv_w=csv.writer(f)
              for j in range(10):
                 loss_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list,loss0_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,'IGR')
