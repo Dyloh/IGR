@@ -296,7 +296,7 @@ for i in range(1):
      tau_max=i+3
      tau_min=1
      t.append(tau_max)
-     with open('air.csv','a',encoding='utf-8',newline="" ) as f:
+     with open('saved_result/out.csv','a',encoding='utf-8',newline="" ) as f:
              csv_w=csv.writer(f)
              for j in range(10):
                 print('iter:',j)
