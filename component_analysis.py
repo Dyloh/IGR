@@ -58,13 +58,11 @@ def pca_components(d, spatial = True):
         d = d - np.mean(d, axis = 1)[:, np.newaxis]
     else:
         d = d - np.mean(d, axis = 0)[np.newaxis, :]
-    print(d)
 
     # SVD will return only the diagonal of the S matrix    
     U, s, Vt = svd(d, False, True, True)
     s **= 2
     s *= 1.0 / (d.shape[1] - 1)
-    #print(U.shape)
     # flip signs so that max(abs()) of each col is positive
     for i in range(U.shape[1]):
         if max(U[:,i]) < abs(min(U[:,i])):
@@ -127,9 +125,7 @@ def orthomax(U, rtol = np.finfo(np.float32).eps ** 0.5, gamma = 1.0, maxiter = 1
     ColNorms = np.zeros((1, m))
     
     dsum = 0.0
-    print(U)
     for indx in range(maxiter):
-        print(indx)
         old_dsum = dsum
         np.sum(Ur**2, axis = 0, out = ColNorms[0,:])
         C = n * Ur**3
@@ -141,7 +137,6 @@ def orthomax(U, rtol = np.finfo(np.float32).eps ** 0.5, gamma = 1.0, maxiter = 1
         np.dot(U, R, out = Ur)
         if abs(dsum - old_dsum) / dsum < rtol:
             break
-    print(np.sum(np.dot(U,R)-Ur))
     # flip signs of components, where max-abs in col is negative
     for i in range(m):
         if np.amax(Ur[:,i]) < -np.amin(Ur[:,i]):
