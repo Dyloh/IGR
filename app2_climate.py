@@ -6,112 +6,52 @@ import scipy
 import math
 from multiprocessing import Pool
 from collections import defaultdict
-from scipy import stats
 import cvxpy as cp
-from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
-from scipy.fftpack import fft,ifft
-import tigramite.causal_mediation as mediation
-import tigramite.toymodels.non_additive as toy_setup
 from tigramite import data_processing as pp
-from tigramite.causal_mediation import CausalMediation
 from tigramite.pcmci import PCMCI
 from scipy.stats import pearsonr
 import csv
 from tigramite.independence_tests.parcorr import ParCorr
-import statsmodels.api as sm
 import random
-from estimate import drig,anchor,dantzig,granger
+from statsmodels.tsa.stattools import grangercausalitytests
 from component_analysis import pca_components_gf, orthomax
 from statsmodels.tsa.stattools import grangercausalitytests
 from sklearn.metrics import r2_score
+from methods import Anchor_Regression_train_and_evaluate, Causal_Dantzig_train_and_evaluate, DRIG_train_and_evaluate, calculating_wk, train_and_evaluate_worst_R2
 
-tau_max=7
-tau_min=1
-dataset = nc.Dataset('data/air.1950.nc')
-temp_data = dataset.variables['air'][:,8]
-dataset1 = nc.Dataset('data/air.2000.nc') 
-temp_data1 = dataset1.variables['air'][:,8]
-dataset2 = nc.Dataset('data/air.2010.nc')
-temp_data2 = dataset2.variables['air'][:,8]
-dataset3 = nc.Dataset('data/air.2020.nc')
-temp_data3 = dataset3.variables['air'][:,8]
-
-def subsets(nums,l,i):
-    result = [[i]]
-    for num in nums:
-        if num !=i:
-            for element in result[:]:
-                if len(element)<l:
-                    x=element[:]
-                    x.append(num)
-                    result.append(x)        
-    return result
-
-
-def compute_igr(features, responses, x_val,y_val,x_test,y_test,hyper_gamma=100,subset_num=0):
-
-        num_envs = len(features)
-        dim_x = np.shape(features[0])[1]
-        w=np.zeros(dim_x)
-        x_cat=np.concatenate((features[0],features[1]),axis=0)
-        y_cat=np.concatenate((responses[0],responses[1]),axis=0)
-
-        sig=np.zeros((num_envs,dim_x,dim_x))
-        for i in range(num_envs):
-            num_feat=np.shape(features[i])[0]
-            for j in range(num_feat):
-                sig[i]=sig[i]+np.matmul(np.transpose(features[i][j:j+1]),features[i][j:j+1])/(num_feat)
-
-
-        for i in range(dim_x):
-             tgt=np.arange(dim_x)
-             sub=subsets(tgt,subset_num,i)
-             inf_w=1e8
-             for j in sub:
-                    w_now=0
-                    w_cat=np.linalg.lstsq(x_cat[:,j],y_cat,rcond=1e-6)[0]
-                    for k in range(num_envs):
-                         y=responses[k]
-                         x=features[k][:,j]
-                         w_e=np.linalg.lstsq(x,y)[0]
-                         sig_e=sig[k,j][:,j]
-                         w_now=w_now+(w_e-w_cat).T@sig_e@(w_e-w_cat)
-                    if inf_w>w_now:
-                         inf_w=w_now
-             w[i]=np.sqrt(inf_w/num_envs)
-
-        h_list=[0.5,1,5,10,50,100,200,500,1000,1500,2000,2500,3000,4000,5000]
-        l_list=[0.0001,0.001,0.01,0.05,0.1,0.5]
-        min_loss=1e9
-        min_weight=0
-        min_ind=[]
-        for i in range(len(h_list)):
-               for lam in l_list:
-                    hyper_gamma=h_list[i]
-                    weight=cp.Variable(dim_x)
-                    square_loss=cp.sum_squares(features[0]@weight -responses[0][:,0])+cp.sum_squares(features[1]@weight -responses[1][:,0])
-                    problem=cp.Problem(cp.Minimize(square_loss/4 + hyper_gamma *(w.T @ cp.abs(weight))+lam*cp.sum(cp.abs(weight)) ))
-                    problem.solve()
-                    weight=weight.value
-                    loss=err(x_val,y_val,weight)
-                    if loss<=min_loss:
-                         min_loss=loss
-                         loss_test=err(x_test,y_test,weight)
-                         min_weight=weight.reshape(len(weight),1)
-                         min_ind=np.where(weight>1e-4)[0]
-        print(x_test.shape,y_test.shape,min_ind)
-        return min_weight,loss_test
+def granger(varible_id,cat_x,cat_y,x_val,y_val,x_test,y_test,tau_max,tau_min,gamma_sequence_granger,lambda_sequence_granger):
+    min_granger=1e9
+    for alpha in gamma_sequence_granger:
+        ind=[]
+        for i in range(60):
+                    t=np.array([cat_x[:,varible_id],cat_x[:,i]])
+                    test_result = grangercausalitytests(t.T, maxlag=tau_max+1 ,verbose=False)
+                    for lag in range(tau_min, tau_max + 1):
+                        p_values = test_result[lag][0]['ssr_ftest'][1] 
+                        if p_values>1-alpha:
+                            ind.append((lag-1)*60+i)
+        if ind==[]:
+            continue
+        for lam in lambda_sequence_granger:
+            g_estimator = Ridge(alpha=lam)
+            g_estimator.fit(cat_x[:,ind],cat_y)
+            val_pred=g_estimator.predict(x_val[ind].T)
+            val_pred=val_pred.reshape(len(val_pred),1)
+            val_loss=np.mean((val_pred-y_val.T)**2)
+            min_granger=min(min_granger,val_loss)
+            if min_granger==val_loss:
+                test_pred=g_estimator.predict(x_test[ind].T)
+                test_pred=test_pred.reshape(len(test_pred),1)
+                test_loss=np.mean((test_pred-y_test.T)**2)
+        return test_loss
 def err(x,y,weight):
     e=0
     for i in range(x.shape[0]):
-         # print(x[i,:].dot(weight),y[i])
           e=e+(x[i,:].dot(weight)-y[i])**2
     return e/x.shape[0]
-
-def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resume=False):
-    loss0_list=[]
-    loss_list=[]
+def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR'):
+    igr_list=[]
     granger_list=[]
     lasso_list=[]
     pc_list=[]
@@ -121,7 +61,11 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
     rand_list=[]
     select_target=[]
     sample_cat=np.concatenate((sample1,sample2),axis=1).T
-    if mode=='pcmci':
+    TRAIN_ID_SLICE = slice(0,2)
+    VALID_ID_SLICE = slice(2,3)
+    TEST_ID_SLICE = slice(3,4)
+    K=2
+    if 'pcmci' in mode:
         var_names=[]
         res_list=[]
         gamma_sequence_PCMCI=[0.00001,0.0001,0.001,0.01]
@@ -147,17 +91,17 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
                   x1=sample1[:,tau_max-tau_min:sample1.shape[1]-tau_min]
                   x2=sample2[:,tau_max-tau_min:sample2.shape[1]-tau_min]
                   x_test=test[:,tau_max-tau_min:test.shape[1]-tau_min]
-                  x_val=val[:,tau_max-tau_min:test.shape[1]-tau_min]
+                  x_val=val[:,tau_max-tau_min:val.shape[1]-tau_min]
              else:
                   x1=np.concatenate((x1,sample1[:,tau_max-j:sample1.shape[1]-j]))
                   x2=np.concatenate((x2,sample2[:,tau_max-j:sample2.shape[1]-j]))
                   x_test=np.concatenate((x_test,test[:,tau_max-j:test.shape[1]-j]))
-                  x_val=np.concatenate((x_val,val[:,tau_max-j:test.shape[1]-j]))
+                  x_val=np.concatenate((x_val,val[:,tau_max-j:val.shape[1]-j]))
         sample=random.sample(range(0, 364-tau_max), 300)
-        y1=y1[:,sample]
-        y2=y2[:,sample]
-        x1=x1[:,sample]
-        x2=x2[:,sample]
+        y1=y1[:,sample]- np.mean(y1[:,sample], keepdims=True)
+        y2=y2[:,sample]- np.mean(y2[:,sample], keepdims=True)
+        x1=x1[:,sample]- np.mean(x1[:,sample], axis=1, keepdims=True)
+        x2=x2[:,sample]- np.mean(x2[:,sample], axis=1, keepdims=True)
         cat_x=np.concatenate((x1,x2),axis=1).T
         cat_y=np.concatenate((y1,y2),axis=1).T
 
@@ -172,33 +116,64 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
             continue
         else:
             select_target.append(varible_id)
-            print(select_target)
+
+        x_list=[x1.T,x2.T,x_val.T,x_test.T]
+        y_list=[y1.reshape(-1),y2.reshape(-1),y_val.reshape(-1),y_test.reshape(-1)]
+        sigma_list=[]
+        u_list=[]
+        for e in range(4):
+            X_e = x_list[e]
+            y_e = y_list[e]
+            Sigma_e = X_e.T @ X_e / X_e.shape[0]
+            u_e = X_e.T @ y_e / X_e.shape[0]
+            
+            sigma_list.append(Sigma_e)
+            u_list.append(u_e)
+
+        if 'IGR' in mode:
+            w_table, _ = calculating_wk(k=K, Sigma_list=sigma_list[TRAIN_ID_SLICE], u_list=u_list[TRAIN_ID_SLICE], 
+                                                        silent=True)
+            min_igr=1e9
+            gamma_sequence_IGR=[0.1,1,10,100,500,1000,3000,5000]
+            lambda_sequence_IGR=[0.0001,0.001,0.01,0.1,0.5]
+            for k_ in range(1, K+1):
+                w_array = w_table[:,k_-1]
+                val_igr,test_igr,_= train_and_evaluate_worst_R2(w_array=w_array, gamma_sequence=gamma_sequence_IGR, lambda_sequence=lambda_sequence_IGR,
+                                                            y_list=y_list,Sigma_list=sigma_list,u_list=u_list,
+                                                            train_id_slice=TRAIN_ID_SLICE,valid_id_slice=VALID_ID_SLICE,test_id_slice=TEST_ID_SLICE)
+                min_pos = np.unravel_index(np.argmin(val_igr), val_igr.shape) 
+                min_igr=min(min_igr,test_igr[min_pos])
+            igr_list.append(min_igr)
+        if 'anchor' in mode:
+            gamma_list=[0.01,0.1]
+            lam_list=[0.01,0.1,0.5,1.0]
+            val_a,test_a,_=Anchor_Regression_train_and_evaluate(x_list,y_list,sigma_list,u_list,gamma_list,lam_list,TRAIN_ID_SLICE,VALID_ID_SLICE,TEST_ID_SLICE)
+            min_pos = np.unravel_index(np.argmin(val_a), val_a.shape) 
+            an_list.append(test_a[min_pos])
         
-        if mode=='anchor':
-            gamma_list=[0.001,0.01,0.05,0.1,0.5]
+        if 'drig' in mode:
+            gamma_list=[1e-4,0.001,0.01,0.1]
             lam_list=[0.001,0.01,0.1]
-            _,min_a=anchor([x1,x2],[y1,y2],x_val,y_val,x_test,y_test,gamma_list,lam_list)
-            an_list.append(min_a)
-        
-        if mode=='drig':
-            gamma_list=[0.001,0.01,0.05,0.1,0.5]
-            lam_list=[0.001,0.01,0.1]
-            _,min_d=drig([x1,x2],[y1,y2],x_val,y_val,x_test,y_test,gamma_list,lam_list)
-            drig_list.append(min_d)
+            val_d,test_d,_=DRIG_train_and_evaluate(X_list=x_list,y_list=y_list,Sigma_list=sigma_list,u_list=u_list,
+                                            gamma_sequence_DRIG=gamma_list,train_id_slice=TRAIN_ID_SLICE,valid_id_slice=VALID_ID_SLICE,test_id_slice=TEST_ID_SLICE)
+            min_pos = np.unravel_index(np.argmin(val_d), val_d.shape) 
+            drig_list.append(test_d[min_pos])
 
     
-        if mode=='dantzig':
-            lam_list=[0.01,0.05,0.1,0.5,1,2,4,8,16]
-            min_cd=dantzig([x1,x2],[y1,y2],x_val,y_val,x_test,y_test,lam_list)
-            cd_list.append(min_cd)
+        if 'dantzig' in mode:
+            lam_list=[0.01,0.1,0.5,1,10,20]
+            val_cd,test_cd,_=Causal_Dantzig_train_and_evaluate(y_list=y_list,Sigma_list=sigma_list,u_list=u_list,
+                                            lambda_sequence=lam_list,train_id_slice=TRAIN_ID_SLICE,valid_id_slice=VALID_ID_SLICE,test_id_slice=TEST_ID_SLICE)
+            min_pos = np.unravel_index(np.argmin(val_cd), val_cd.shape) 
+            cd_list.append(test_cd[min_pos])
 
-        if mode=='granger':
+        if 'granger' in mode:
             gamma_sequence_granger=[0.001,0.01,0.1,0.2]
             lambda_sequence_granger=0.1*np.power(2.0,np.arange(-4,3,1,dtype=np.float64))
             min_granger=granger(varible_id,cat_x,cat_y,x_val,y_val,x_test,y_test,tau_max,tau_min,gamma_sequence_granger,lambda_sequence_granger)
             granger_list.append(min_granger)
           
-        if mode=='lasso':
+        if 'lasso' in mode:
             a_list=[0.5,0.1,0.05,0.01,0.001]
             min_lasso=1e9
             for j in range(len(a_list)):
@@ -216,7 +191,7 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
                     loss_test=np.mean((test_pred-y_test.T)**2)
             lasso_list.append(loss_test)
 
-        if mode=='rand':
+        if 'rand' in mode:
             a_list=[0.5,0.1,0.05,0.01,0.001]
             min_rand=1e9
             for j in range(len(a_list)):
@@ -232,7 +207,7 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
                     loss_test=err(x_test.T,y_test,T,weight)
             rand_list.append(loss_test)
 
-        if mode=='pcmci':
+        if 'pcmci' in mode:
             min_err=1e9
             for res in res_list:
                 for j in range(tau_min,tau_max+1):
@@ -253,19 +228,24 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR',resu
                         loss_test=np.mean((test_pred-y_test.T)**2)
             pc_list.append(loss_test)
 
+    return igr_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list
 
-        if mode=='IGR':
-            weight,min_l=compute_igr((x1.T,x2.T),(y1.T,y2.T),x_val.T,y_val.T,x_test.T,y_test.T,subset_num=3)
-            loss_list.append(min_l)
-            print('k=3:',min_l)
-    print(np.mean(drig_list),np.mean(an_list),np.mean(loss0_list),np.mean(cd_list))
-    return loss_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list,loss0_list
-
+def tofield(d, lats, lons):
+    return d.reshape([len(lats), len(lons)])
     
-
+tau_max=1
+tau_min=1
+resume=False
+dataset = nc.Dataset('data/air.1950.nc')
+temp_data = dataset.variables['air'][:,8]
+dataset1 = nc.Dataset('data/air.2000.nc') 
+temp_data1 = dataset1.variables['air'][:,8]
+dataset2 = nc.Dataset('data/air.2010.nc')
+temp_data2 = dataset2.variables['air'][:,8]
+dataset3 = nc.Dataset('data/air.2020.nc')
+temp_data3 = dataset3.variables['air'][:,8]
 
 temp_mean=np.mean(temp_data,axis=0)
-print(temp_data.shape,temp_mean.shape)
 lats=dataset1.variables['lat'][:]
 lons=dataset1.variables['lon'][:]
 for i in range(temp_mean.shape[0]):
@@ -280,10 +260,10 @@ for i in range(len(lats)):
      temp_data1[:,i,:] *=cos_trans
      temp_data2[:,i,:] *=cos_trans
      temp_data3[:,i,:] *=cos_trans
-temp_data = temp_data.reshape(temp_data.shape[0],-1)
-temp_data1 = temp_data1.reshape(temp_data1.shape[0],-1)
-temp_data2 = temp_data2.reshape(temp_data2.shape[0],-1)
-temp_data3 = temp_data3.reshape(temp_data2.shape[0],-1)
+temp_data = temp_data.reshape(temp_data.shape[0],-1).data
+temp_data1 = temp_data1.reshape(temp_data1.shape[0],-1).data
+temp_data2 = temp_data2.reshape(temp_data2.shape[0],-1).data
+temp_data3 = temp_data3.reshape(temp_data3.shape[0],-1).data
 
 total_data=np.concatenate((temp_data,temp_data1),axis=0)
 total_mean=np.mean(total_data,axis=0)
@@ -311,50 +291,16 @@ for i in range(60):
     temp_data3[:,i]=temp_data3[:,i]/std[i]
 
 target=np.arange(1,59,1)
-t1=[]
-t2=[]
-t3=[]
-t4=[]
-t5=[]
-t6=[]
-t7=[]
-t=[]
+
 for i in range(1):
      tau_max=i+3
      tau_min=1
      t.append(tau_max)
-     with open('saved_results/out.csv','a',encoding='utf-8',newline="" ) as f:
+     with open('air.csv','a',encoding='utf-8',newline="" ) as f:
              csv_w=csv.writer(f)
              for j in range(10):
-                loss_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list,loss0_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,'IGR')
-                print(np.mean(loss_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list),np.mean(loss0_list))
-                csv_w.writerow([np.mean(loss_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list),np.mean(loss0_list)])
+                print('iter:',j)
+                igr_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,['IGR'])
+                print(np.mean(igr_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list))
+                csv_w.writerow([np.mean(igr_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list)])
              f.close()
-     t1.append(np.mean(loss_list))
-     t2.append(np.mean(granger_list))
-     t3.append(np.mean(lasso_list))
-     t4.append(np.mean(pc_list))
-     t5.append(np.mean(drig_list))
-     t6.append(np.mean(an_list))
-     t7.append(np.mean(rand_list))
-     if i%3==10:
-       fig = plt.figure()
-       plt.scatter(target,granger_list,label='granger causality',marker='o')
-       plt.scatter(target,loss_list,label='L1 norm',marker='o')
-       plt.scatter(target,lasso_list,label='lasso',marker='o')
-       plt.xlabel('components')
-       plt.ylabel('test loss')
-       plt.legend()
-       plt.savefig(f"lag_{tau_max}.png")
-print(t1,t2,t3,t4,t5,t6,t7)
-fig=plt.figure()
-plt.plot(t,t1,label='l1 norm')
-plt.plot(t,t2,label='PCMCI')
-plt.plot(t,t3,label='lasso')
-plt.plot(t,t5,label='DRIG')
-plt.plot(t,t6,label='anchor')
-plt.plot(t,t7,label='rand')
-plt.xlabel('lag')
-plt.ylabel('Test loss')
-plt.legend()
-plt.show()
