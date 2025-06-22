@@ -19,6 +19,8 @@ from component_analysis import pca_components_gf, orthomax
 from statsmodels.tsa.stattools import grangercausalitytests
 from sklearn.metrics import r2_score
 from methods import Anchor_Regression_train_and_evaluate, Causal_Dantzig_train_and_evaluate, DRIG_train_and_evaluate, calculating_wk, train_and_evaluate_worst_R2
+import causalicp as icp
+import itertools
 
 def granger(varible_id,cat_x,cat_y,x_val,y_val,x_test,y_test,tau_max,tau_min,gamma_sequence_granger,lambda_sequence_granger):
     min_granger=1e9
@@ -53,6 +55,7 @@ def err(x,y,weight):
 def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR'):
     igr_list=[]
     granger_list=[]
+    icp_list=[]
     lasso_list=[]
     pc_list=[]
     cd_list=[]
@@ -144,11 +147,41 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR'):
                 min_pos = np.unravel_index(np.argmin(val_igr), val_igr.shape) 
                 min_igr=min(min_igr,test_igr[min_pos])
             igr_list.append(min_igr)
+
+        if 'ICP' in mode:
+            sets=[]
+            base = set(range(cat_x.shape[1]))
+            for num in range(500):
+                subset_size = random.randint(0, cat_x.shape[1])
+                subset = set(random.sample(base, subset_size))
+                sets.append(subset)
+            result=icp.fit([np.concatenate((x1,y1),axis=0).T,np.concatenate((x2,y2),axis=0).T],cat_x.shape[1], alpha=0.05, sets=sets,precompute=True, verbose=False, color=False)
+            chosen=[]
+            for key in result.pvalues:
+                if result.pvalues[key]>0.9:
+                    chosen.append(key)
+
+            a_list=[0.5,0.1,0.05,0.01,0.001]
+            min_lasso=1e9
+            for j in range(len(a_list)):
+                alpha=a_list[j]
+                lasso_model=Lasso(alpha=alpha,max_iter=20000)
+                lasso_model.fit(cat_x[:,chosen],cat_y)
+                val_pred=lasso_model.predict(x_val[chosen].T)
+                val_pred=val_pred.reshape(len(val_pred),1)
+                loss_val=np.mean((val_pred-y_val.T)**2)
+                if min_lasso>loss_val:
+                    min_lasso=loss_val
+                    test_pred=lasso_model.predict(x_test[chosen].T)
+                    test_pred=test_pred.reshape(len(test_pred),1)
+                    loss_test=np.mean((test_pred-y_test.T)**2)
+            icp_list.append(loss_test)
         if 'anchor' in mode:
             gamma_list=[0.01,0.1]
-            lam_list=[0.01,0.1,0.5,1.0]
+            lam_list=[0.01,0.1,0.5,0.8]
             val_a,test_a,_=Anchor_Regression_train_and_evaluate(x_list,y_list,sigma_list,u_list,gamma_list,lam_list,TRAIN_ID_SLICE,VALID_ID_SLICE,TEST_ID_SLICE)
             min_pos = np.unravel_index(np.argmin(val_a), val_a.shape) 
+            print(val_a,min_pos)
             an_list.append(test_a[min_pos])
         
         if 'drig' in mode:
@@ -185,10 +218,10 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR'):
                 val_pred=val_pred.reshape(len(val_pred),1)
                 loss_val=np.mean((val_pred-y_val.T)**2)
                 if min_lasso>loss_val:
-                    min_lasso=loss_test
                     test_pred=lasso_model.predict(x_test.T)
                     test_pred=test_pred.reshape(len(test_pred),1)
                     loss_test=np.mean((test_pred-y_test.T)**2)
+                    min_lasso=loss_val
             lasso_list.append(loss_test)
 
         if 'rand' in mode:
@@ -227,23 +260,40 @@ def l1_fair(sample1,sample2,val,test,varible_ids,tau_max,tau_min,mode='IGR'):
                         test_pred=test_pred.reshape(len(test_pred),1)
                         loss_test=np.mean((test_pred-y_test.T)**2)
             pc_list.append(loss_test)
-
-    return igr_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list
+    return igr_list,icp_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list
 
 def tofield(d, lats, lons):
     return d.reshape([len(lats), len(lons)])
     
-tau_max=1
-tau_min=1
+data_name='air' #choice=['air','slp','csulf','pres']
 resume=False
-dataset = nc.Dataset('data/air.1950.nc')
-temp_data = dataset.variables['air'][:,8]
-dataset1 = nc.Dataset('data/air.2000.nc') 
-temp_data1 = dataset1.variables['air'][:,8]
-dataset2 = nc.Dataset('data/air.2010.nc')
-temp_data2 = dataset2.variables['air'][:,8]
-dataset3 = nc.Dataset('data/air.2020.nc')
-temp_data3 = dataset3.variables['air'][:,8]
+if data_name=='air' or data_name=='csulf':
+    if data_name=='csulf':
+        dataset_name='csulf.ntat.gauss'
+    else:
+        dataset_name=data_name
+    dataset = nc.Dataset(f'data/{dataset_name}.1950.nc')
+    temp_data = dataset.variables[data_name][:,8]
+    dataset1 = nc.Dataset(f'data/{dataset_name}.2000.nc') 
+    temp_data1 = dataset1.variables[data_name][:,8]
+    dataset2 = nc.Dataset(f'data/{dataset_name}.2010.nc')
+    temp_data2 = dataset2.variables[data_name][:,8]
+    dataset3 = nc.Dataset(f'data/{dataset_name}.2020.nc')
+    temp_data3 = dataset3.variables[data_name][:,8]
+else:
+    if data_name=='pres':
+        dataset_name='pres.sfc'
+    else:
+        dataset_name=data_name
+    dataset = nc.Dataset(f'data/{dataset_name}.1950.nc')
+    temp_data = dataset.variables[data_name][:]
+    dataset1 = nc.Dataset(f'data/{dataset_name}.2000.nc') 
+    temp_data1 = dataset1.variables[data_name][:]
+    dataset2 = nc.Dataset(f'data/{dataset_name}.2010.nc')
+    temp_data2 = dataset2.variables[data_name][:]
+    dataset3 = nc.Dataset(f'data/{dataset_name}.2020.nc')
+    temp_data3 = dataset3.variables[data_name][:]
+mode=['anchor','lasso','ICP']
 
 temp_mean=np.mean(temp_data,axis=0)
 lats=dataset1.variables['lat'][:]
@@ -293,14 +343,13 @@ for i in range(60):
 target=np.arange(1,59,1)
 
 for i in range(1):
-     tau_max=i+3
+     tau_max=i+7
      tau_min=1
-     t.append(tau_max)
-     with open('saved_result/out.csv','a',encoding='utf-8',newline="" ) as f:
+     with open(f'results/{data_name}.csv','a',encoding='utf-8',newline="" ) as f:
              csv_w=csv.writer(f)
              for j in range(10):
                 print('iter:',j)
-                igr_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,['IGR'])
-                print(np.mean(igr_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list))
-                csv_w.writerow([np.mean(igr_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list)])
+                igr_list,icp_list,granger_list,lasso_list,pc_list,drig_list,an_list,rand_list,cd_list=l1_fair(temp_data.T,temp_data1.T,temp_data2.T,temp_data3.T,target,tau_max,tau_min,mode)
+                print(np.mean(igr_list),np.mean(icp_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list))
+                csv_w.writerow([np.mean(igr_list),np.mean(icp_list),np.mean(granger_list),np.mean(lasso_list),np.mean(pc_list),np.mean(drig_list),np.mean(an_list),np.mean(rand_list),np.mean(cd_list)])
              f.close()
